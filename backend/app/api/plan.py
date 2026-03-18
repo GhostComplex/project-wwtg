@@ -18,9 +18,10 @@ async def select_plan(req: PlanSelectRequest) -> dict[str, object]:
     session_id = req.session_id or ""
 
     # Store selected plan in session state
-    if session_id and session_id in chat_service._sessions:
-        session = chat_service._sessions[session_id]
+    if session_id:
+        session = await chat_service._get_session(session_id)
         session["selected_plan"] = req.plan_id
+        await chat_service._save_session(session_id, session)
 
     # Get plan details for confirmation
     detail = chat_service.plan_service.get_plan_detail(req.plan_id)
@@ -43,8 +44,8 @@ async def reject_plan(req: PlanSelectRequest) -> dict[str, object]:
     session_id = req.session_id or ""
 
     rejection_count = 0
-    if session_id and session_id in chat_service._sessions:
-        session = chat_service._sessions[session_id]
+    if session_id:
+        session = await chat_service._get_session(session_id)
         # Track rejected plan titles
         for plan in session.get("current_plans", []):
             title = plan.title if hasattr(plan, "title") else plan.get("title", "")
@@ -52,6 +53,7 @@ async def reject_plan(req: PlanSelectRequest) -> dict[str, object]:
                 session["rejected_plans"].append(title)
         session["rejection_count"] = session.get("rejection_count", 0) + 1
         rejection_count = session["rejection_count"]
+        await chat_service._save_session(session_id, session)
 
     await analytics.track("plan_rejected", session_id=session_id,
                           properties={"plan_id": req.plan_id, "rejection_count": rejection_count})
