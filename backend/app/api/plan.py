@@ -24,7 +24,7 @@ async def select_plan(req: PlanSelectRequest) -> dict[str, object]:
         await chat_service._save_session(session_id, session)
 
     # Get plan details for confirmation
-    detail = chat_service.plan_service.get_plan_detail(req.plan_id)
+    detail = await chat_service.plan_service.get_plan_detail(req.plan_id)
 
     await analytics.track("plan_selected", session_id=session_id,
                           properties={"plan_id": req.plan_id})
@@ -65,4 +65,4 @@ async def reject_plan(req: PlanSelectRequest) -> dict[str, object]:
 async def get_plan_detail(plan_id: str) -> PlanDetail:
     """Get full plan detail with stops, tips, sources."""
     await analytics.track("plan_detail_viewed", properties={"plan_id": plan_id})
-    return chat_service.plan_service.get_plan_detail(plan_id)
+    return await chat_service.plan_service.get_plan_detail(plan_id)

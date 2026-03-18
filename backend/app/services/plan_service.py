@@ -77,9 +77,57 @@ class PlanService:
             )
             cards.append(card)
 
+        # Enrich plans with navigation links asynchronously
+        city = context.get("city", "苏州")
+        for plan_data in [self._plans[c.plan_id] for c in cards]:
+            await self._enrich_stops_with_nav(plan_data, city)
+
         return cards
 
-    def get_plan_detail(self, plan_id: str) -> PlanDetail:
+    async def _enrich_stops_with_nav(self, plan_data: dict[str, Any], city: str) -> None:
+        """Geocode stops and add navigation links + walking distances."""
+        if self.map is None:
+            return
+
+        stops = plan_data.get("stops", [])
+        geocoded: list[dict[str, Any] | None] = []
+
+        for stop in stops:
+            if stop.get("nav_link"):
+                # Already has a nav link, try to extract coords for distance calc
+                geocoded.append(None)
+                continue
+            try:
+                geo = await self.map.geocode(stop.get("name", ""), city)
+                if geo:
+                    stop["nav_link"] = self.map.generate_nav_link(
+                        stop["name"], geo["lat"], geo["lng"]
+                    )
+                    geocoded.append(geo)
+                else:
+                    geocoded.append(None)
+            except Exception:
+                logger.warning("Geocode failed for stop: %s", stop.get("name"))
+                geocoded.append(None)
+
+        # Calculate walking distances between consecutive stops
+        for i in range(len(stops) - 1):
+            if stops[i].get("walk_to_next"):
+                continue  # Already has distance
+            geo_a = geocoded[i] if i < len(geocoded) else None
+            geo_b = geocoded[i + 1] if (i + 1) < len(geocoded) else None
+            if geo_a and geo_b:
+                try:
+                    walk = await self.map.calculate_walking_distance(
+                        (geo_a["lng"], geo_a["lat"]),
+                        (geo_b["lng"], geo_b["lat"]),
+                    )
+                    stops[i]["walk_to_next"] = f"{walk['distance']}, {walk['duration']}"
+                except Exception:
+                    logger.warning("Walking distance calc failed: %s → %s",
+                                   stops[i].get("name"), stops[i + 1].get("name"))
+
+    async def get_plan_detail(self, plan_id: str) -> PlanDetail:
         """Get full plan detail, enriched with nav links.
 
         Uses an in-memory LRU cache (maxsize=100) to avoid
