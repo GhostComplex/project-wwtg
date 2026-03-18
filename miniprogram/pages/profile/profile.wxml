@@ -4,7 +4,28 @@
     <text class="profile-title">我的周末</text>
   </view>
 
-  <view wx:if="{{historyPlans.length === 0}}" class="empty-state">
+  <view wx:if="{{loading}}" class="loading-state">
+    <text>加载中...</text>
+  </view>
+
+  <view wx:elif="{{isEmpty}}" class="empty-state">
     <text>还没有历史方案\n去聊天页开始你的周末计划吧 🎉</text>
+  </view>
+
+  <view wx:else class="history-list">
+    <view
+      wx:for="{{historyPlans}}"
+      wx:key="plan_id"
+      class="history-item"
+      data-plan-id="{{item.plan_id}}"
+      bindtap="onPlanTap"
+    >
+      <text class="history-emoji">{{item.emoji || '📋'}}</text>
+      <view class="history-info">
+        <text class="history-title">{{item.title}}</text>
+        <text class="history-date">{{item.dateText}}</text>
+      </view>
+      <text class="history-arrow">›</text>
+    </view>
   </view>
 </view>
