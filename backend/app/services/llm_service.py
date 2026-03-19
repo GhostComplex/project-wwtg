@@ -152,6 +152,7 @@ class LLMService:
     ) -> dict[str, Any]:
         """Extract user context from message."""
         if not self.api_key:
+            logger.warning("LLM_API_KEY not set, using mock parse_intent")
             return self._mock_parse_intent(user_message)
 
         history_text = ""
@@ -177,6 +178,7 @@ class LLMService:
     ) -> list[dict[str, Any]]:
         """Generate 2 differentiated plans."""
         if not self.api_key:
+            logger.warning("LLM_API_KEY not set, using mock generate_plans")
             return self._mock_generate_plans(context)
 
         prompt_parts = [
@@ -270,6 +272,7 @@ class LLMService:
         if "免费" in message:
             result["preferences"].append("免费")
 
+        result["_source"] = "mock"
         return result
 
     def _mock_generate_plans(self, context: dict[str, Any]) -> list[dict[str, Any]]:
@@ -339,4 +342,6 @@ class LLMService:
             ],
         }
 
+        plan_a["_source"] = "mock"
+        plan_b["_source"] = "mock"
         return [plan_a, plan_b]
