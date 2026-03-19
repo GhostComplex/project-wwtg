@@ -89,7 +89,7 @@ async def main() -> None:
     except Exception:
         logger.warning("Database not available, skipping DB persist")
 
-    service = DataService(redis_client=redis_client, db=db_session)
+    service = DataService(redis_client=redis_client, db_session=db_session)
 
     total = 0
     for city, items in grouped.items():
