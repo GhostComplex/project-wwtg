@@ -211,7 +211,7 @@ class ChatService:
         try:
             plans = await asyncio.wait_for(
                 self._do_generate(session, ctx, session_id),
-                timeout=10.0,
+                timeout=settings.llm_timeout,
             )
         except asyncio.TimeoutError:
             logger.warning("Plan generation timed out after %ds for session %s", settings.llm_timeout, session_id)
