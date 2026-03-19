@@ -402,11 +402,14 @@ class DataService:
             try:
                 raw = await self._redis.get(key)
                 if raw:
-                    logger.info("Cache HIT for %s", city)
                     pois: list[dict[str, Any]] = json.loads(raw)
+                    logger.info("Cache HIT for %s: %d POIs", city, len(pois))
                     if tags:
                         tag_set = set(tags)
-                        pois = [p for p in pois if tag_set & set(p.get("tags", []))]
+                        # Soft filter: POIs with matching tags first, then untagged/non-matching
+                        matched = [p for p in pois if tag_set & set(p.get("tags", []))]
+                        unmatched = [p for p in pois if not (tag_set & set(p.get("tags", [])))]
+                        pois = matched + unmatched
                     return pois
                 logger.info("Cache MISS for %s", city)
             except Exception:
