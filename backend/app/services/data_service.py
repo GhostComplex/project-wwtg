@@ -62,9 +62,9 @@ class DataService:
         """Fetch POIs for a city/tag combo from cache, crawler, or LLM fallback."""
         pois = await self.get_cached_pois(city, tags)
         if pois:
-            logger.warning("Found %d cached POIs for %s (real data)", len(pois), city)
+            logger.info("Found %d cached POIs for %s (real data)", len(pois), city)
         else:
-            logger.warning("No cached POIs for %s, trying LLM fallback (ai_generated)", city)
+            logger.info("No cached POIs for %s, trying LLM fallback (ai_generated)", city)
             pois = await self.generate_fallback_pois(city, tags)
         return pois
 
@@ -403,7 +403,7 @@ class DataService:
                 raw = await self._redis.get(key)
                 if raw:
                     pois: list[dict[str, Any]] = json.loads(raw)
-                    logger.warning("Cache HIT for %s: %d POIs", city, len(pois))
+                    logger.info("Cache HIT for %s: %d POIs", city, len(pois))
                     if tags:
                         tag_set = set(tags)
                         # Soft filter: POIs with matching tags first, then untagged/non-matching
@@ -411,7 +411,7 @@ class DataService:
                         unmatched = [p for p in pois if not (tag_set & set(p.get("tags", [])))]
                         pois = matched + unmatched
                     return pois
-                logger.warning("Cache MISS for %s", city)
+                logger.info("Cache MISS for %s", city)
             except Exception:
                 logger.warning("Failed to read cached POIs for %s", city)
 
