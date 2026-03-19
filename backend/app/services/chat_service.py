@@ -51,7 +51,10 @@ class ChatService:
         self.weather = WeatherService(api_key=settings.amap_api_key)
         self.map = MapService(api_key=settings.amap_api_key)
         self.plan_service = PlanService(llm=self.llm, map_service=self.map)
-        self.data = DataService()
+        self.data = DataService(
+            llm_service=self.llm,
+            redis_client=redis_client,
+        )
 
         self._redis = redis_client
         # In-memory fallback when Redis is unavailable
