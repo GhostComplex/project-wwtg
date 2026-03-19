@@ -26,7 +26,7 @@ App({
     } else {
       // develop / unknown → local dev
       this.globalData.baseURL = 'http://localhost:8000/api/v1';
-      this.globalData.mockMode = true;
+      this.globalData.mockMode = false;
     }
 
     console.log(`Environment: ${envType}, baseURL: ${this.globalData.baseURL}, mockMode: ${this.globalData.mockMode}`);
