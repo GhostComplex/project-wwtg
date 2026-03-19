@@ -19,6 +19,12 @@ from app.models.db import Base
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: startup and shutdown hooks."""
     print(f"🚀 Starting {settings.app_name}")
+    # Log critical config for easier debugging
+    print(f"📋 Config: LLM_BASE_URL={settings.llm_base_url}")
+    print(f"📋 Config: LLM_MODEL={settings.llm_model}")
+    print(f"📋 Config: LLM_TIMEOUT={settings.llm_timeout}s")
+    print(f"📋 Config: LLM_API_KEY={'✅ set' if settings.llm_api_key else '❌ NOT SET (will use mock)'}")
+    print(f"📋 Config: AMAP_API_KEY={'✅ set' if settings.amap_api_key else '❌ NOT SET'}")
     # Create all tables (idempotent — safe to call every startup)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
