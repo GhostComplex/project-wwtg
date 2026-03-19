@@ -132,7 +132,7 @@ class LLMService:
         last_err: Exception | None = None
         for attempt in range(retries + 1):
             try:
-                resp = await client.post("/v1/chat/completions", json=payload)
+                resp = await client.post("/chat/completions", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
                 return data["choices"][0]["message"]["content"]
