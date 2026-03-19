@@ -199,9 +199,14 @@ class LLMService:
 
         try:
             raw = await self.chat_completion(
-                GENERATE_PLANS_SYSTEM, "\n".join(prompt_parts), max_tokens=2000
+                GENERATE_PLANS_SYSTEM, "\n".join(prompt_parts), max_tokens=4000
             )
             result = json.loads(raw)
+            # Log plan structure for debugging
+            plans_list = result if isinstance(result, list) else result.get("plans", [result])
+            for i, p in enumerate(plans_list):
+                if isinstance(p, dict):
+                    logger.warning("Plan %d has %d stops", i, len(p.get("stops", [])))
             # Handle both {"plans": [...]} and [...] formats
             if isinstance(result, dict) and "plans" in result:
                 return result["plans"]
