@@ -68,16 +68,17 @@ GENERATE_PLANS_SYSTEM = """你是"周末搭子"，像一个靠谱的本地朋友
 - 如果有被拒绝的方案，避免类似推荐"""
 
 EXTRACT_POIS_SYSTEM = """从小红书笔记中提取结构化的POI（兴趣点）数据。
-对每个笔记，提取其中提到的地点信息，返回JSON数组：
+笔记可能只有标题没有正文，请从标题、标签、点赞数等信息推断地点。
+对每组笔记，提取其中提到或暗示的具体地点（景点、餐厅、咖啡馆、公园等），返回JSON数组：
 [{
   "name": "地点名称",
-  "address": "地址（如有）",
+  "address": "地址（如有，没有则为null）",
   "tags": ["标签"],
-  "description": "简短描述",
-  "cost_range": "花费范围",
+  "description": "简短描述（基于笔记内容推断）",
+  "cost_range": "花费范围（如有，没有则为null）",
   "suitable_for": ["适合人群"]
 }]
-只返回JSON。"""
+如果无法提取任何具体地点，返回空数组 []。只返回JSON。"""
 
 
 class LLMService:
@@ -213,7 +214,16 @@ class LLMService:
             return []
 
         notes_text = json.dumps(
-            [{"title": n.get("title", ""), "content": n.get("content", "")[:200]} for n in notes[:5]],
+            [
+                {
+                    "title": n.get("title", ""),
+                    "content": n.get("content", "")[:200] or "(无正文)",
+                    "tags": n.get("tags", []),
+                    "likes": n.get("likes", 0),
+                    "url": n.get("url", ""),
+                }
+                for n in notes[:5]
+            ],
             ensure_ascii=False,
         )
         try:
