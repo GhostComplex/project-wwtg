@@ -108,6 +108,50 @@ async def main() -> None:
     pois = await service.process_notes(notes, args.city)
     logger.info("Extracted %d POIs", len(pois))
 
+    # Verify POIs via AMAP geocode
+    if pois and settings.amap_api_key:
+        import httpx
+
+        logger.info("Verifying %d POIs via AMAP...", len(pois))
+        verified_count = 0
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            for poi in pois:
+                name = poi.get("name", "")
+                if not name:
+                    poi["verified"] = False
+                    continue
+                try:
+                    resp = await client.get(
+                        "https://restapi.amap.com/v3/place/text",
+                        params={
+                            "key": settings.amap_api_key,
+                            "keywords": name,
+                            "city": args.city,
+                            "citylimit": "true",
+                            "output": "JSON",
+                        },
+                    )
+                    data = resp.json()
+                    if data.get("status") == "1" and data.get("pois"):
+                        poi["verified"] = True
+                        amap_poi = data["pois"][0]
+                        # Enrich with real address from AMAP
+                        poi["address"] = amap_poi.get("address", poi.get("address", ""))
+                        poi["amap_name"] = amap_poi.get("name", "")
+                        verified_count += 1
+                    else:
+                        poi["verified"] = False
+                except Exception as e:
+                    logger.warning("AMAP verify failed for %s: %s", name, e)
+                    poi["verified"] = False
+                await asyncio.sleep(0.2)  # Rate limit
+
+        logger.info("Verified %d/%d POIs via AMAP", verified_count, len(pois))
+    elif pois:
+        logger.warning("AMAP_API_KEY not set — skipping POI verification")
+        for poi in pois:
+            poi["verified"] = False
+
     if pois:
         await service.cache_pois(args.city, pois)
         logger.info("Cached %d POIs for %s", len(pois), args.city)
