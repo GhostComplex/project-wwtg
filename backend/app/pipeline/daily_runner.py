@@ -156,7 +156,7 @@ async def main() -> None:
 
                 poi = POIData(
                     name=raw["name"],
-                    address=raw.get("address"),
+                    address=raw.get("address") or None,
                     city=city,
                     tags=merged_tags,
                     description=rec.get("reason", ""),
@@ -164,7 +164,7 @@ async def main() -> None:
                     suitable_for=rec.get("suitable_for", []),
                     source_type="amap",
                     rating=raw.get("rating"),
-                    phone=raw.get("phone"),
+                    phone=raw.get("phone") or None,
                     location=raw.get("location") or None,
                     verified=True,
                 )

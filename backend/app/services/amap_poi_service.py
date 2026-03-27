@@ -196,6 +196,14 @@ class AmapPoiService:
     @staticmethod
     def _parse_poi(raw: dict[str, Any]) -> dict[str, Any]:
         """Convert raw AMAP POI to internal format."""
+
+        def _safe_str(value: Any, default: str = "") -> str:
+            """Coerce AMAP field to string. AMAP sometimes returns [] or None
+            instead of a string for missing fields."""
+            if isinstance(value, str) and value != "[]":
+                return value
+            return default
+
         biz_ext = raw.get("biz_ext") or {}
         rating_str = biz_ext.get("rating") if isinstance(biz_ext, dict) else None
 
@@ -209,25 +217,18 @@ class AmapPoiService:
         elif isinstance(rating_str, (int, float)):
             rating = float(rating_str)
 
-        # Parse tel (AMAP may return "[]", [], None, or actual phone string)
-        tel = raw.get("tel", "")
-        if not isinstance(tel, str):
-            tel = ""
-        elif tel in ("[]", ""):
-            tel = ""
-
         # Map AMAP type string to user-friendly tags
-        amap_type = raw.get("type", "")
+        amap_type = _safe_str(raw.get("type"))
         tags = _map_type_to_tags(amap_type)
 
         return {
-            "name": raw.get("name", ""),
-            "address": raw.get("address", ""),
-            "location": raw.get("location", ""),  # "lng,lat"
+            "name": _safe_str(raw.get("name")),
+            "address": _safe_str(raw.get("address")),
+            "location": _safe_str(raw.get("location")),  # "lng,lat"
             "amap_type": amap_type,
             "tags": tags,
             "rating": rating,
-            "phone": tel,
+            "phone": _safe_str(raw.get("tel")),
         }
 
     @staticmethod
