@@ -27,7 +27,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -45,7 +45,7 @@ services:
       POSTGRES_PASSWORD: wwtg
       POSTGRES_DB: wwtg
     ports:
-      - "5432:5432"
+      - "${PG_PORT:-5432}:5432"
     restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql/data
