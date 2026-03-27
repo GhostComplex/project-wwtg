@@ -165,7 +165,7 @@ async def main() -> None:
                     source_type="amap",
                     rating=raw.get("rating"),
                     phone=raw.get("phone"),
-                    location=raw.get("location"),
+                    location=raw.get("location") or None,
                     verified=True,
                 )
                 poi_models.append(poi)

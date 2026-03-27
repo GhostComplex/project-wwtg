@@ -199,17 +199,21 @@ class AmapPoiService:
         biz_ext = raw.get("biz_ext") or {}
         rating_str = biz_ext.get("rating") if isinstance(biz_ext, dict) else None
 
-        # Parse rating (AMAP returns string like "4.5" or "[]" for missing)
+        # Parse rating (AMAP returns string like "4.5", "[]", [], or None)
         rating: float | None = None
-        if rating_str and rating_str not in ("[]", ""):
+        if isinstance(rating_str, str) and rating_str not in ("[]", ""):
             try:
                 rating = float(rating_str)
             except (ValueError, TypeError):
                 pass
+        elif isinstance(rating_str, (int, float)):
+            rating = float(rating_str)
 
-        # Parse tel (AMAP may return "[]" for missing)
+        # Parse tel (AMAP may return "[]", [], None, or actual phone string)
         tel = raw.get("tel", "")
-        if tel in ("[]", None):
+        if not isinstance(tel, str):
+            tel = ""
+        elif tel in ("[]", ""):
             tel = ""
 
         # Map AMAP type string to user-friendly tags
