@@ -190,14 +190,15 @@ POI: {name}
 
 ---
 
-## 七、执行计划（Milestone 制，完成即推进）
+## 七、执行计划
 
-| Milestone | 任务 | 产出 |
-|-----------|------|------|
-| **M1** | 高德 POI API 接入 + 字段映射 + daily_runner 改造 + 数据写入 Redis/PG | `amap_poi_service.py` + 改造后的 `daily_runner.py` + `data_service.py` |
-| **M2** | LLM 推荐理由 prompt 设计 + 联调测试（苏州 3 场景验证） | `llm_service.py` 新增方法 + 端到端测试通过 |
+> 排期原则：按 milestone 推进，完成一个立即开始下一个，不等固定时间节点。
 
-M1 完成立刻开 M2，不等时间节点。
+| Milestone | 内容 | 完成标志 |
+|-----------|------|----------|
+| **M1：数据源接入** | 新建高德 POI 模块 + 切换 daily_runner + 停用爬虫 | daily_runner 成功从高德拉取 POI 写入 Redis |
+| **M2：LLM 内容生成** | 批量生成 tags 和 reason 写入缓存 | 每条 POI 有推荐理由和标签，语气自然 |
+| **M3：联调验收** | 端到端测试（苏州 3 场景） | 验收标准全部通过，可提 PR |
 
 **执行人：** SuperCrew
 **前置条件：** Juanjuan 确认方案
