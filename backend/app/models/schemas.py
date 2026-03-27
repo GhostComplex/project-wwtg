@@ -101,7 +101,7 @@ class PlanSelectRequest(BaseModel):
 # --- POI & Crawl Data ---
 
 class POIData(BaseModel):
-    """A point-of-interest extracted from crawled notes or AI generation."""
+    """A point-of-interest extracted from crawled notes, AMAP, or AI generation."""
     name: str
     address: Optional[str] = None
     city: str
@@ -109,11 +109,15 @@ class POIData(BaseModel):
     description: Optional[str] = None
     cost_range: Optional[str] = None  # "50以内" / "50-100" / "100+"
     suitable_for: list[str] = Field(default_factory=list)  # ["孕妇友好", "亲子", "情侣"]
-    source_type: str = "xiaohongshu"  # "xiaohongshu" | "ai_generated"
+    source_type: str = "xiaohongshu"  # "xiaohongshu" | "amap" | "ai_generated"
     source_url: Optional[str] = None
     source_likes: Optional[int] = None
     route_suggestions: list[str] = Field(default_factory=list)
     verified: Optional[bool] = None  # True if AMAP confirmed, False if not found, None if unchecked
+    # AMAP-specific fields
+    rating: Optional[float] = None  # AMAP biz_ext.rating
+    phone: Optional[str] = None  # AMAP tel
+    location: Optional[str] = None  # "lng,lat" for nav link generation
 
 
 class CrawlResult(BaseModel):

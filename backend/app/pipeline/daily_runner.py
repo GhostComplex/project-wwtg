@@ -1,4 +1,7 @@
-"""Daily pipeline runner: crawl XHS → extract POIs → cache.
+"""Daily pipeline runner: fetch AMAP POIs → cache to Redis/PostgreSQL.
+
+Replaces the previous XHS crawler pipeline. Architecture unchanged:
+daily_runner pulls data → writes to cache → chat reads from cache.
 
 Usage:
     python -m app.pipeline.daily_runner
@@ -19,26 +22,34 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="WWTG daily data pipeline")
-    parser.add_argument("--city", type=str, help="Single city to crawl (default: all)")
-    parser.add_argument("--limit", type=int, help="Max keywords per city (default: all)")
+    parser = argparse.ArgumentParser(description="WWTG daily data pipeline (AMAP)")
+    parser.add_argument("--city", type=str, help="Single city to fetch (default: all)")
+    parser.add_argument(
+        "--limit", type=int, help="Max type categories per city (default: all)"
+    )
     return parser.parse_args()
 
 
 async def main() -> None:
-    """Run the daily data pipeline."""
+    """Run the daily data pipeline using AMAP POI API."""
     args = parse_args()
 
     from app.config import settings
-    from app.services.crawler.cookie_manager import CookieManager
-    from app.services.crawler.xhs_crawler import XHSCrawler
+    from app.models.schemas import POIData
+    from app.pipeline.amap_config import AMAP_PAGES_PER_TYPE, AMAP_TYPE_CODES, CITIES
+    from app.services.amap_poi_service import AmapPoiService
     from app.services.data_service import DataService
 
-    logger.info("=== Daily Pipeline Starting ===")
+    logger.info("=== Daily Pipeline Starting (AMAP) ===")
+
+    if not settings.amap_api_key:
+        logger.warning(
+            "⚠️  AMAP_API_KEY not set. Pipeline will use mock data. "
+            "Set AMAP_API_KEY in .env to fetch real POIs."
+        )
 
     redis_client = None
-    browser = None
-    pw = None
+    amap_service = None
 
     # --- Redis ---
     try:
@@ -51,64 +62,55 @@ async def main() -> None:
         logger.warning("Redis not available — running without cache persistence")
         redis_client = None
 
-    # --- Cookie check ---
-    cookie_manager = CookieManager(redis_client=redis_client)
-    cookies = await cookie_manager.load_cookies()
+    # --- AMAP service ---
+    amap_service = AmapPoiService(api_key=settings.amap_api_key)
 
-    if not cookies:
-        logger.warning(
-            "⚠️  No XHS cookies found. Skipping crawl. "
-            "Place cookies in $XHS_COOKIES_DIR (default /data/cookies/cookies.json) "
-            "or store them in Redis key '%s'.",
-            CookieManager.REDIS_KEY,
-        )
-        logger.info("=== Pipeline Skipped (no cookies) ===")
-        if redis_client:
-            await redis_client.close()
-        return
-
-    if cookie_manager.is_expired():
-        logger.warning(
-            "⚠️  XHS cookies are expired. Crawl may fail — "
-            "consider re-logging and updating cookies."
-        )
-
-    # --- Playwright browser ---
-    try:
-        from playwright.async_api import async_playwright
-
-        pw = await async_playwright().start()
-        browser = await pw.chromium.launch(headless=True)
-        logger.info("Playwright browser launched")
-    except Exception:
-        logger.warning(
-            "Playwright not available — cannot crawl. "
-            "Install with: pip install playwright && playwright install chromium"
-        )
-        if redis_client:
-            await redis_client.close()
-        return
+    # --- Determine target cities and type codes ---
+    target_cities = [args.city] if args.city else CITIES
+    type_codes = AMAP_TYPE_CODES
+    if args.limit:
+        # Limit number of type categories
+        limited = dict(list(type_codes.items())[: args.limit])
+        type_codes = limited
 
     # --- Run pipeline ---
     try:
-        crawler = XHSCrawler(browser=browser, cookie_manager=cookie_manager)
-        service = DataService(crawler=crawler, redis_client=redis_client)
+        service = DataService(redis_client=redis_client)
 
-        results = await service.run_daily_pipeline(
-            cities=[args.city] if args.city else None,
-            keyword_limit=args.limit,
-        )
+        for city in target_cities:
+            logger.info("Fetching POIs for city: %s", city)
+            raw_pois = await amap_service.fetch_city_pois(
+                city=city,
+                type_codes=type_codes,
+                pages=AMAP_PAGES_PER_TYPE,
+            )
+
+            # Convert AMAP results to POIData
+            poi_models: list[POIData] = []
+            for raw in raw_pois:
+                poi = POIData(
+                    name=raw["name"],
+                    address=raw.get("address"),
+                    city=city,
+                    tags=raw.get("tags", []),
+                    source_type="amap",
+                    rating=raw.get("rating"),
+                    phone=raw.get("phone"),
+                    location=raw.get("location"),
+                    verified=True,  # AMAP POIs are verified real places
+                )
+                poi_models.append(poi)
+
+            # Cache to Redis/PG
+            await service.cache_pois(city, poi_models)
+            logger.info("City %s: %d POIs cached", city, len(poi_models))
 
         logger.info("=== Pipeline Complete ===")
-        for city, count in results.items():
-            logger.info("  %s: %d POIs", city, count)
+
     except Exception:
         logger.exception("Pipeline failed with unexpected error")
     finally:
-        if browser:
-            await browser.close()
-        if pw:
-            await pw.stop()
+        await amap_service.close()
         if redis_client:
             await redis_client.close()
 

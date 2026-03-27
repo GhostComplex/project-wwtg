@@ -1,7 +1,7 @@
-"""Data pipeline service: crawler orchestration + Redis/PostgreSQL caching.
+"""Data pipeline service: caching and persistence for POI data.
 
-Replaces the W1 stub with real pipeline logic.
-All external dependencies (Redis, PostgreSQL, crawler) are injected for testability.
+Manages Redis cache and PostgreSQL storage for POIs.
+Data source was XHS crawler, now AMAP POI API (daily_runner handles fetching).
 """
 
 import json
@@ -12,14 +12,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from app.models.db import PoiCache
-from app.models.schemas import CrawlResult, POIData
-from app.services.crawler.config import (
-    BATCH_COOLDOWN,
-    CITIES,
-    SEARCH_KEYWORDS,
-)
-from app.services.crawler.stealth import random_delay
-from app.services.crawler.xhs_crawler import XHSCrawler
+from app.models.schemas import POIData
 from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
@@ -28,31 +21,32 @@ logger = logging.getLogger(__name__)
 _CACHE_KEY = "wwtg:pois:{city}"
 _CACHE_TTL = 48 * 3600  # 48 hours
 
-# LLM extraction batch size
-_LLM_BATCH_SIZE = 5
-
 
 class DataService:
-    """Manages POI data: crawling, LLM extraction, caching, and persistence.
+    """Manages POI data: caching and persistence.
 
     Args:
-        crawler: XHSCrawler instance (or None to skip crawling).
         redis_client: Async Redis client (or None for no-cache mode).
         db_session: Async SQLAlchemy session (or None for no-persist mode).
-        llm_service: LLMService instance (or None for mock extraction).
+        llm_service: LLMService instance (or None for no LLM fallback).
     """
 
     def __init__(
         self,
-        crawler: Optional[XHSCrawler] = None,
         redis_client: Any = None,
         db_session: Any = None,
         llm_service: Optional[LLMService] = None,
+        # Deprecated: crawler param kept for backward compat, ignored
+        crawler: Any = None,
     ) -> None:
-        self._crawler = crawler
         self._redis = redis_client
         self._db = db_session
         self._llm = llm_service
+        if crawler is not None:
+            logger.warning(
+                "DataService 'crawler' param is deprecated (AMAP migration). "
+                "Crawler is no longer used."
+            )
 
     # ------------------------------------------------------------------
     # Public API (preserved from W1 for backward compat)
@@ -122,12 +116,16 @@ class DataService:
             return []
 
     async def refresh_cache(self, city: str) -> int:
-        """Trigger a cache refresh for a city. Returns number of POIs updated."""
-        if self._crawler is None:
-            return 0
-        pois = await self._crawl_city(city)
-        await self.cache_pois(city, pois)
-        return len(pois)
+        """Trigger a cache refresh for a city. Returns number of POIs updated.
+
+        Note: With AMAP migration, this now requires external POI fetching.
+        Use daily_runner for full refresh. This method is kept for backward compat.
+        """
+        logger.warning(
+            "refresh_cache called but crawler is deprecated. "
+            "Use daily_runner with AMAP for full refresh."
+        )
+        return 0
 
     async def get_cache_stats(self) -> dict[str, Any]:
         """Return cache statistics."""
@@ -147,7 +145,7 @@ class DataService:
         return stats
 
     # ------------------------------------------------------------------
-    # Pipeline
+    # Pipeline (deprecated — daily_runner now handles fetching via AMAP)
     # ------------------------------------------------------------------
 
     async def run_daily_pipeline(
@@ -155,134 +153,29 @@ class DataService:
         cities: list[str] | None = None,
         keyword_limit: int | None = None,
     ) -> dict[str, int]:
-        """Orchestrate the daily crawl for all cities and keywords.
+        """Deprecated: daily_runner now handles AMAP fetching directly.
 
-        Args:
-            cities: Optional list of cities to crawl (default: all from config).
-            keyword_limit: Optional max keywords per city (default: all).
-
-        Returns:
-            Dict mapping city name to number of POIs collected.
+        Kept for backward compatibility. Returns empty results.
         """
-        target_cities = cities or CITIES
-        results: dict[str, int] = {}
-
-        for city in target_cities:
-            logger.info("Starting pipeline for city: %s", city)
-            pois = await self._crawl_city(city, keyword_limit=keyword_limit)
-            await self.cache_pois(city, pois)
-            results[city] = len(pois)
-            logger.info("City %s: %d POIs cached", city, len(pois))
-
-        return results
+        logger.warning(
+            "DataService.run_daily_pipeline is deprecated. "
+            "Use daily_runner directly for AMAP-based pipeline."
+        )
+        return {}
 
     async def _crawl_city(self, city: str, keyword_limit: int | None = None) -> list[POIData]:
-        """Crawl all keywords for a single city and process into POIs."""
-        all_pois: list[POIData] = []
-
-        if self._crawler is None:
-            logger.warning("No crawler configured, skipping crawl for %s", city)
-            return all_pois
-
-        keywords = SEARCH_KEYWORDS[:keyword_limit] if keyword_limit else SEARCH_KEYWORDS
-
-        for i, keyword in enumerate(keywords):
-            logger.info("  Crawling keyword %d/%d: %s %s", i + 1, len(keywords), city, keyword)
-            try:
-                raw_notes = await self._crawler.search_notes(keyword=keyword, city=city, limit=20)
-                notes = [CrawlResult(**n) for n in raw_notes]
-                pois = await self.process_notes(notes, city)
-                all_pois.extend(pois)
-            except Exception:
-                logger.exception("Error crawling %s %s", city, keyword)
-
-            # Batch cooldown between keyword groups
-            if i < len(keywords) - 1:
-                logger.debug("  Batch cooldown %ds", BATCH_COOLDOWN)
-                await random_delay(BATCH_COOLDOWN, BATCH_COOLDOWN + 5)
-
-        return all_pois
+        """Deprecated: XHS crawling removed. Returns empty list."""
+        logger.warning("_crawl_city is deprecated (AMAP migration)")
+        return []
 
     # ------------------------------------------------------------------
-    # Processing
+    # Processing (deprecated — AMAP returns structured data directly)
     # ------------------------------------------------------------------
 
-    async def process_notes(self, notes: list[CrawlResult], city: str) -> list[POIData]:
-        """Extract POI data from crawled notes using LLM.
-
-        Uses LLM extraction when available, falls back to mock/heuristic.
-
-        Args:
-            notes: List of crawled note results.
-            city: City the notes belong to.
-
-        Returns:
-            List of extracted POIData.
-        """
-        if self._llm and self._llm.api_key:
-            return await self._extract_pois_with_llm(notes, city)
-        return self._extract_pois_mock(notes, city)
-
-    async def _extract_pois_with_llm(
-        self, notes: list[CrawlResult], city: str
-    ) -> list[POIData]:
-        """Extract POIs via LLM in batches, with mock fallback per batch."""
-        all_pois: list[POIData] = []
-
-        for i in range(0, len(notes), _LLM_BATCH_SIZE):
-            batch = notes[i : i + _LLM_BATCH_SIZE]
-            try:
-                notes_dicts = [
-                    {
-                        "title": n.title,
-                        "content": n.content[:300] if n.content else "",
-                        "tags": n.tags,
-                        "url": n.url,
-                        "likes": n.likes,
-                    }
-                    for n in batch
-                ]
-                extracted = await self._llm.extract_pois(notes_dicts, city)  # type: ignore[union-attr]
-                for j, poi_dict in enumerate(extracted):
-                    # Map back source metadata from original note
-                    source_note = batch[min(j, len(batch) - 1)]
-                    poi = POIData(
-                        name=poi_dict.get("name", "未知地点"),
-                        address=poi_dict.get("address"),
-                        city=city,
-                        tags=poi_dict.get("tags", []),
-                        description=poi_dict.get("description"),
-                        cost_range=poi_dict.get("cost_range"),
-                        suitable_for=poi_dict.get("suitable_for", []),
-                        source_type="xiaohongshu",
-                        source_url=source_note.url,
-                        source_likes=source_note.likes,
-                        route_suggestions=poi_dict.get("route_suggestions", []),
-                    )
-                    all_pois.append(poi)
-                logger.info("LLM extracted %d POIs from batch %d", len(extracted), i // _LLM_BATCH_SIZE + 1)
-            except Exception:
-                logger.exception("LLM extraction failed for batch %d, using mock", i // _LLM_BATCH_SIZE + 1)
-                all_pois.extend(self._extract_pois_mock(batch, city))
-
-        return all_pois
-
-    @staticmethod
-    def _extract_pois_mock(notes: list[CrawlResult], city: str) -> list[POIData]:
-        """Fallback: create POIs from note metadata without LLM."""
-        pois: list[POIData] = []
-        for note in notes:
-            poi = POIData(
-                name=note.title[:50] if note.title else "未知地点",
-                city=city,
-                tags=note.tags[:5],
-                description=note.content[:200] if note.content else None,
-                source_type="xiaohongshu",
-                source_url=note.url,
-                source_likes=note.likes,
-            )
-            pois.append(poi)
-        return pois
+    async def process_notes(self, notes: list[Any], city: str) -> list[POIData]:
+        """Deprecated: XHS note processing removed."""
+        logger.warning("process_notes is deprecated (AMAP migration)")
+        return []
 
     # ------------------------------------------------------------------
     # Caching

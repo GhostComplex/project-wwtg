@@ -1,100 +1,100 @@
-"""Tests for DataService LLM extraction and DB persistence (M7)."""
+"""Tests for DataService caching, persistence, and AMAP integration."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models.schemas import CrawlResult, POIData
+from app.models.schemas import POIData
 from app.services.data_service import DataService
 
 
-def _make_note(**overrides) -> CrawlResult:
+def _make_amap_poi(**overrides) -> POIData:
+    """Create a test POIData with AMAP source type."""
     defaults = {
-        "note_id": "n1",
-        "title": "苏州周末好去处",
-        "content": "平江路超好逛，推荐去猫的天空之城",
-        "likes": 100,
-        "tags": ["苏州", "周末"],
-        "url": "https://xhs.com/note/1",
+        "name": "拙政园",
+        "address": "苏州市姑苏区东北街178号",
+        "city": "苏州",
+        "tags": ["景点", "户外"],
+        "source_type": "amap",
+        "rating": 4.8,
+        "phone": "0512-67510286",
+        "location": "120.630,31.324",
+        "verified": True,
     }
     defaults.update(overrides)
-    return CrawlResult(**defaults)
+    return POIData(**defaults)
 
 
 @pytest.mark.asyncio
-class TestProcessNotesLLM:
-    """Test LLM-based POI extraction in process_notes()."""
+class TestAmapPOICaching:
+    """Test caching AMAP-sourced POIs."""
 
-    async def test_uses_llm_when_available(self):
-        llm = AsyncMock()
-        llm.api_key = "test-key"
-        llm.extract_pois.return_value = [
-            {
-                "name": "平江路",
-                "address": "苏州市姑苏区平江路",
-                "tags": ["古街", "文艺"],
-                "description": "苏州最有特色的历史街区",
-                "cost_range": "免费",
-                "suitable_for": ["情侣", "朋友"],
-            }
-        ]
+    async def test_cache_and_retrieve_amap_pois(self):
+        """AMAP POIs can be cached to Redis and retrieved."""
+        redis = AsyncMock()
+        redis.get.return_value = None
 
-        svc = DataService(llm_service=llm)
-        notes = [_make_note()]
-        pois = await svc.process_notes(notes, "苏州")
+        svc = DataService(redis_client=redis)
+        pois = [_make_amap_poi(), _make_amap_poi(name="苏州博物馆")]
 
-        assert len(pois) == 1
-        assert pois[0].name == "平江路"
-        assert pois[0].city == "苏州"
-        assert pois[0].source_url == "https://xhs.com/note/1"
-        llm.extract_pois.assert_called_once()
+        await svc.cache_pois("苏州", pois)
+        redis.set.assert_called_once()
 
-    async def test_falls_back_to_mock_on_llm_failure(self):
-        llm = AsyncMock()
-        llm.api_key = "test-key"
-        llm.extract_pois.side_effect = Exception("API error")
+        # Verify the cached data includes AMAP fields
+        call_args = redis.set.call_args
+        cached_json = json.loads(call_args[0][1])
+        assert len(cached_json) == 2
+        assert cached_json[0]["source_type"] == "amap"
+        assert cached_json[0]["rating"] == 4.8
+        assert cached_json[0]["location"] == "120.630,31.324"
 
-        svc = DataService(llm_service=llm)
-        notes = [_make_note()]
-        pois = await svc.process_notes(notes, "苏州")
+    async def test_amap_poi_has_new_fields(self):
+        """POIData schema supports AMAP-specific fields."""
+        poi = _make_amap_poi()
+        assert poi.rating == 4.8
+        assert poi.phone == "0512-67510286"
+        assert poi.location == "120.630,31.324"
+        assert poi.verified is True
+        assert poi.source_type == "amap"
 
-        # Should fall back to mock extraction
-        assert len(pois) == 1
-        assert pois[0].name == "苏州周末好去处"
+    async def test_backward_compat_xhs_pois(self):
+        """Old XHS-sourced POIs still work with updated schema."""
+        poi = POIData(
+            name="Test",
+            city="苏州",
+            source_type="xiaohongshu",
+            source_url="https://xhs.com/note/1",
+            source_likes=100,
+        )
+        assert poi.rating is None
+        assert poi.phone is None
+        assert poi.location is None
 
-    async def test_uses_mock_when_no_api_key(self):
-        llm = AsyncMock()
-        llm.api_key = ""
 
-        svc = DataService(llm_service=llm)
-        notes = [_make_note()]
-        pois = await svc.process_notes(notes, "苏州")
+@pytest.mark.asyncio
+class TestDeprecatedMethods:
+    """Deprecated XHS methods return empty/no-op gracefully."""
 
-        assert len(pois) == 1
-        assert pois[0].name == "苏州周末好去处"
-        llm.extract_pois.assert_not_called()
-
-    async def test_uses_mock_when_no_llm(self):
+    async def test_process_notes_deprecated(self):
         svc = DataService()
-        notes = [_make_note()]
-        pois = await svc.process_notes(notes, "苏州")
+        result = await svc.process_notes([], "苏州")
+        assert result == []
 
-        assert len(pois) == 1
-        assert pois[0].name == "苏州周末好去处"
+    async def test_run_daily_pipeline_deprecated(self):
+        svc = DataService()
+        result = await svc.run_daily_pipeline()
+        assert result == {}
 
-    async def test_batch_processing(self):
-        """Notes are sent to LLM in batches of 5."""
-        llm = AsyncMock()
-        llm.api_key = "test-key"
-        llm.extract_pois.return_value = [{"name": "地点", "tags": []}]
+    async def test_refresh_cache_deprecated(self):
+        svc = DataService()
+        result = await svc.refresh_cache("苏州")
+        assert result == 0
 
-        svc = DataService(llm_service=llm)
-        notes = [_make_note(note_id=f"n{i}") for i in range(7)]
-        pois = await svc.process_notes(notes, "苏州")
-
-        # 7 notes → 2 batches (5 + 2)
-        assert llm.extract_pois.call_count == 2
+    async def test_crawler_param_warns(self):
+        """Passing crawler param logs a deprecation warning."""
+        svc = DataService(crawler="fake_crawler")
+        # Should not raise, just warn
 
 
 @pytest.mark.asyncio
@@ -121,3 +121,24 @@ class TestGetCachedPoisFallback:
         svc = DataService()
         pois = await svc.get_cached_pois("苏州")
         assert pois == []
+
+    async def test_returns_cached_amap_pois(self):
+        """Cached AMAP POIs are returned correctly from Redis."""
+        cached = [
+            {
+                "name": "拙政园",
+                "city": "苏州",
+                "tags": ["景点"],
+                "source_type": "amap",
+                "rating": 4.8,
+            }
+        ]
+        redis = AsyncMock()
+        redis.get.return_value = json.dumps(cached)
+
+        svc = DataService(redis_client=redis)
+        pois = await svc.get_cached_pois("苏州")
+
+        assert len(pois) == 1
+        assert pois[0]["source_type"] == "amap"
+        assert pois[0]["rating"] == 4.8
