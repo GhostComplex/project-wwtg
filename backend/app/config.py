@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_model: str = "qwen-plus"
-    llm_timeout: int = 45
+    llm_timeout: int = 90
 
     # WeChat
     wx_app_id: str = ""
