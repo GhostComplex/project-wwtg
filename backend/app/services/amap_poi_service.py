@@ -4,6 +4,7 @@ Wraps the AMAP Web Service API for text search and around search.
 Used by daily_runner to populate the POI cache (replacing XHS crawler).
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -113,6 +114,7 @@ class AmapPoiService:
         city: str,
         type_codes: dict[str, str],
         pages: int = 3,
+        qps_delay: float = 0.6,
     ) -> list[dict[str, Any]]:
         """Fetch all POIs for a city across multiple type categories.
 
@@ -122,16 +124,22 @@ class AmapPoiService:
             city: City name.
             type_codes: Mapping of scenario name → AMAP type codes.
             pages: Number of pages to fetch per type (1-3 recommended).
+            qps_delay: Seconds to wait between API calls (0.6s for personal
+                       key with 2 QPS limit; set to 0 for enterprise key).
 
         Returns:
             Deduplicated list of POI dicts.
         """
         all_pois: list[dict[str, Any]] = []
         seen_names: set[str] = set()
+        request_count = 0
 
         for scenario, codes in type_codes.items():
             for page in range(1, pages + 1):
+                if request_count > 0 and qps_delay > 0 and self.api_key:
+                    await asyncio.sleep(qps_delay)
                 pois = await self.search_text(city=city, types=codes, page=page)
+                request_count += 1
                 if not pois:
                     break  # No more results for this type
                 for poi in pois:
