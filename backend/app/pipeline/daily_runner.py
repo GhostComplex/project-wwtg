@@ -7,6 +7,12 @@ Usage:
     python -m app.pipeline.daily_runner
     python -m app.pipeline.daily_runner --city 上海 --limit 2
     python -m app.pipeline.daily_runner --no-llm  # skip LLM enrichment
+
+Docker usage (write to container Redis so API can read it):
+    docker exec <api-container> python -m app.pipeline.daily_runner --city 苏州
+
+Or from host, point to Docker-mapped Redis port:
+    python -m app.pipeline.daily_runner --city 苏州 --redis-url redis://localhost:6380/0
 """
 
 import argparse
@@ -45,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-llm", action="store_true", help="Skip LLM enrichment (tags/reason)"
     )
+    parser.add_argument(
+        "--redis-url", type=str, default="",
+        help="Override REDIS_URL (e.g. redis://localhost:6380/0 for Docker mapped port)",
+    )
     return parser.parse_args()
 
 
@@ -72,12 +82,13 @@ async def main() -> None:
     llm_service = None
 
     # --- Redis ---
+    redis_url = args.redis_url or settings.redis_url
     try:
         import redis.asyncio as aioredis
 
-        redis_client = aioredis.from_url(settings.redis_url)
+        redis_client = aioredis.from_url(redis_url)
         await redis_client.ping()
-        logger.info("Connected to Redis at %s", settings.redis_url)
+        logger.info("Connected to Redis at %s", redis_url)
     except Exception:
         logger.warning("Redis not available — running without cache persistence")
         redis_client = None
