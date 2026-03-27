@@ -111,3 +111,59 @@ class TestFallback:
             pois=[],
         )
         assert len(plans) == 2
+
+
+class TestGeneratePoiRecommendations:
+    """Test LLM-based POI recommendation generation (M2)."""
+
+    @pytest.mark.asyncio
+    async def test_mock_recommendations_without_api_key(self, llm_no_key: LLMService) -> None:
+        """Without API key, returns mock recommendations."""
+        pois = [
+            {"name": "拙政园", "amap_type": "风景名胜;公园", "rating": 4.8, "address": "东北街178号"},
+            {"name": "星巴克", "amap_type": "餐饮服务;咖啡厅", "rating": 4.2, "address": "观前街1号"},
+        ]
+        results = await llm_no_key.generate_poi_recommendations(pois)
+        assert len(results) == 2
+        # Each result should have the required keys
+        for r in results:
+            assert "tags" in r
+            assert "reason" in r
+            assert "suitable_for" in r
+            assert "cost_range" in r
+
+    @pytest.mark.asyncio
+    async def test_mock_infers_free_for_parks(self, llm_no_key: LLMService) -> None:
+        """Mock correctly infers 'free' for park-type POIs."""
+        pois = [{"name": "虎丘公园", "amap_type": "公园广场;公园", "rating": 4.5}]
+        results = await llm_no_key.generate_poi_recommendations(pois)
+        assert results[0]["cost_range"] == "免费"
+
+    @pytest.mark.asyncio
+    async def test_mock_infers_suitable_for_kids(self, llm_no_key: LLMService) -> None:
+        """Mock correctly infers kid-friendly for child-type POIs."""
+        pois = [{"name": "儿童乐园", "amap_type": "亲子乐园;儿童乐园", "rating": 4.0}]
+        results = await llm_no_key.generate_poi_recommendations(pois)
+        assert "亲子" in results[0]["suitable_for"]
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_api_failure(self, llm_with_key: LLMService) -> None:
+        """With fake API key, falls back to mock without crashing."""
+        pois = [{"name": "Test", "amap_type": "风景名胜", "rating": 4.0}]
+        results = await llm_with_key.generate_poi_recommendations(pois)
+        assert len(results) == 1
+        assert "reason" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_batch_processing(self, llm_no_key: LLMService) -> None:
+        """Many POIs are batched correctly."""
+        pois = [{"name": f"地点{i}", "amap_type": "风景名胜"} for i in range(25)]
+        results = await llm_no_key.generate_poi_recommendations(pois, batch_size=10)
+        assert len(results) == 25
+
+    @pytest.mark.asyncio
+    async def test_season_param_accepted(self, llm_no_key: LLMService) -> None:
+        """Season parameter is accepted without error."""
+        pois = [{"name": "Test", "amap_type": "公园"}]
+        results = await llm_no_key.generate_poi_recommendations(pois, season="春天")
+        assert len(results) == 1

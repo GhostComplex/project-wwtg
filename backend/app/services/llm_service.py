@@ -84,6 +84,29 @@ EXTRACT_POIS_SYSTEM = """从小红书笔记中提取结构化的POI（兴趣点�
 }]
 如果无法提取任何具体地点，返回空数组 []。只返回JSON。"""
 
+GENERATE_POI_RECOMMENDATIONS_SYSTEM = """你是"周末搭子"的内容生成模块。根据高德地图POI元数据，为每个地点生成推荐理由和标签。
+
+要求：
+- tags：3-5个场景标签（如"孕妇友好""免费""花季推荐""遛娃""拍照""安静"）
+- reason：50字以内口语化推荐理由，像朋友推荐一样自然
+- suitable_for：适合人群（独自/情侣/亲子/朋友/家人，可多选）
+- cost_range：花费区间（免费/30以内/50以内/50-100/100+）
+
+输入是JSON数组，每个元素有name/type/rating/address/city字段。
+输出也是JSON数组，顺序和输入一一对应，每个元素：
+{
+  "tags": ["标签1", "标签2", ...],
+  "reason": "口语化推荐理由",
+  "suitable_for": ["适合人群"],
+  "cost_range": "花费区间"
+}
+
+注意：
+- 公园、博物馆通常免费
+- 根据地点类型推断适合人群（游乐园→亲子，咖啡厅→情侣/朋友，公园→全人群）
+- reason要有信息量，不要泛泛而谈
+- 只返回JSON数组，不要其他文字"""
+
 
 class LLMService:
     """DeepSeek V3 LLM client with mock fallback."""
@@ -250,6 +273,117 @@ class LLMService:
         except Exception as e:
             logger.error("extract_pois failed: %s", e)
             return []
+
+    async def generate_poi_recommendations(
+        self,
+        pois: list[dict[str, Any]],
+        season: str = "",
+        batch_size: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Generate tags, reason, suitable_for, cost_range for a batch of POIs.
+
+        Processes POIs in batches to reduce LLM call count.
+        Results are returned in the same order as input.
+
+        Args:
+            pois: List of POI dicts with keys: name, amap_type/type, rating, address, city.
+            season: Current season hint (e.g. "春天", "夏天").
+            batch_size: Number of POIs per LLM call.
+
+        Returns:
+            List of dicts with keys: tags, reason, suitable_for, cost_range.
+            Same length as input; failed items get mock defaults.
+        """
+        if not self.api_key:
+            logger.warning("No LLM API key, using mock recommendations")
+            return [self._mock_recommendation(p) for p in pois]
+
+        results: list[dict[str, Any]] = []
+
+        for i in range(0, len(pois), batch_size):
+            batch = pois[i : i + batch_size]
+            batch_input = [
+                {
+                    "name": p.get("name", ""),
+                    "type": p.get("amap_type", p.get("type", "")),
+                    "rating": p.get("rating"),
+                    "address": p.get("address", ""),
+                    "city": p.get("city", ""),
+                }
+                for p in batch
+            ]
+
+            season_hint = f"\n当前季节：{season}" if season else ""
+            prompt = (
+                f"为以下{len(batch)}个地点生成推荐信息：{season_hint}\n"
+                f"{json.dumps(batch_input, ensure_ascii=False)}"
+            )
+
+            try:
+                raw = await self.chat_completion(
+                    GENERATE_POI_RECOMMENDATIONS_SYSTEM,
+                    prompt,
+                    max_tokens=200 * len(batch),  # ~200 tokens per POI
+                )
+                parsed = json.loads(raw)
+
+                # Handle both list and {"recommendations": [...]} formats
+                if isinstance(parsed, dict):
+                    parsed = parsed.get("recommendations", parsed.get("results", []))
+                if not isinstance(parsed, list):
+                    parsed = [parsed]
+
+                # Pad or trim to match batch size
+                for j, poi in enumerate(batch):
+                    if j < len(parsed) and isinstance(parsed[j], dict):
+                        rec = parsed[j]
+                        results.append({
+                            "tags": rec.get("tags", [])[:5],
+                            "reason": (rec.get("reason", "") or "")[:100],
+                            "suitable_for": rec.get("suitable_for", []),
+                            "cost_range": rec.get("cost_range", ""),
+                        })
+                    else:
+                        results.append(self._mock_recommendation(poi))
+
+                logger.info(
+                    "LLM generated recommendations for batch %d (%d POIs)",
+                    i // batch_size + 1, len(batch),
+                )
+            except Exception:
+                logger.exception(
+                    "LLM recommendation failed for batch %d, using mock",
+                    i // batch_size + 1,
+                )
+                results.extend(self._mock_recommendation(p) for p in batch)
+
+        return results
+
+    @staticmethod
+    def _mock_recommendation(poi: dict[str, Any]) -> dict[str, Any]:
+        """Generate a basic recommendation from POI metadata without LLM."""
+        amap_type = poi.get("amap_type", poi.get("type", ""))
+        name = poi.get("name", "")
+
+        # Infer cost from type
+        free_types = ("公园", "博物馆", "纪念馆", "广场", "风景名胜")
+        is_free = any(t in amap_type for t in free_types)
+
+        # Infer suitable_for from type
+        suitable = ["朋友"]
+        if any(t in amap_type for t in ("亲子", "儿童", "游乐")):
+            suitable = ["亲子", "家人"]
+        elif any(t in amap_type for t in ("咖啡", "甜品", "餐饮")):
+            suitable = ["情侣", "朋友"]
+        elif any(t in amap_type for t in ("公园", "广场", "风景")):
+            suitable = ["独自", "情侣", "亲子", "朋友", "家人"]
+
+        return {
+            "tags": [],
+            "reason": f"{name}，值得一去",
+            "suitable_for": suitable,
+            "cost_range": "免费" if is_free else "",
+        }
 
     async def close(self) -> None:
         if self._client:
